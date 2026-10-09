@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>像读竞赛题解一样理解 PPO 与 SAC · tacmon</title><meta name="description" content="从题意、DP 建模到更新公式与伪代码，用程序设计竞赛题解的方式理解 PPO 和 SAC。">
+<meta name="theme-color" content="#f8f7f3"><link rel="canonical" href="https://tacmon.github.io/posts/sac-ppo/">
+<meta property="og:title" content="像读竞赛题解一样理解 PPO 与 SAC"><meta property="og:description" content="从题意、DP 建模到更新公式与伪代码，用程序设计竞赛题解的方式理解 PPO 和 SAC。"><meta property="og:type" content="article"><meta property="og:url" content="https://tacmon.github.io/posts/sac-ppo/">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/style.css"><link rel="stylesheet" href="/assets/katex/katex.min.css"><script defer src="/assets/katex/katex.min.js"></script><script defer src="/assets/math.js"></script></head><body>
+<a class="skip" href="#main">跳到正文</a><header class="site-header"><a class="brand" href="/">tacmon<span> / 学习笔记</span></a><nav aria-label="主导航"><a href="/">文章</a><a href="https://github.com/tacmon">GitHub ↗</a></nav></header>
+<main id="main"><div class="article-header"><a class="back" href="/">← 全部文章</a><p class="eyebrow">REINFORCEMENT LEARNING / 算法题解</p><h1>像读竞赛题解一样理解 PPO 与 SAC</h1><p class="lead">从“当前收益 + 后续价值”开始，理解两种策略学习方法。</p><div class="post-meta"><span>tacmon</span><span>PPO-Clip · 连续动作 SAC</span><a href="/content/sac-ppo.md">Markdown 源文 ↓</a></div></div>
+<div class="reading-layout"><aside class="toc" aria-label="文章目录"><p>本文目录</p><a href="#section-1">1. 题意：在未知环境中取得尽可能高的总分</a><a href="#section-2">2. 基础建模：把价值函数理解为近似 DP 表</a><a href="#section-3">3. PPO：好动作多做一点，但每次不要改得太猛</a><a href="#section-4">4. SAC：学一张动作价值表，并保留有价值的探索</a><a href="#section-5">5. 算法比较与复杂度</a><a href="#section-6">6. 实现时最容易 WA 的地方</a><a href="#section-7">参考资料</a><a class="back-top" href="#main">回到顶部 ↑</a></aside><article class="prose"><p>把强化学习看成一道“只能调用交互接口、不能查看完整地图的最优化题”，PPO 和 SAC 就是两种学习解法。本文按题意、建模、核心观察、更新公式、伪代码和易错点展开。PPO 使用 PPO-Clip；SAC 使用连续动作、双 Q、无需独立 V 网络的版本。</p>
+<h2 id="section-1">1. 题意：在未知环境中取得尽可能高的总分</h2>
+<p>每一步观察状态 <span class="math inline" data-tex="s_t">s_t</span>，选择动作 <span class="math inline" data-tex="a_t">a_t</span>，环境返回奖励 <span class="math inline" data-tex="r_t">r_t</span> 和下一状态 <span class="math inline" data-tex="s_{t+1}">s_{t+1}</span>。例如控制小车时，状态可以是位置与速度，动作可以是转向角与油门，奖励可以是前进距离减去碰撞惩罚。</p>
+<p>环境转移规律未知，只能通过交互收集经验。我们要学习一个策略 <span class="math inline" data-tex="\pi_\theta(a\mid s)">\pi_\theta(a\mid s)</span>：离散动作时它是概率，连续动作时它是概率密度。</p>
+<p>基本目标为：</p>
+<div class="math display" data-tex="\max_\theta J(\theta)=\mathbb E_{\pi_\theta}\left[\sum_{t=0}^{\infty}\gamma^t r_t\right],\qquad 0\le\gamma&lt;1.">\max_\theta J(\theta)=\mathbb E_{\pi_\theta}\left[\sum_{t=0}^{\infty}\gamma^t r_t\right],\qquad 0\le\gamma&lt;1.</div>
+<p>与普通竞赛题不同，输入并不完整：算法需要一边收集信息，一边改进决策。</p>
+<h2 id="section-2">2. 基础建模：把价值函数理解为近似 DP 表</h2>
+<p>定义状态价值和动作价值：</p>
+<div class="math display" data-tex="V^\pi(s)=\mathbb E_\pi\left[\sum_{k=0}^{\infty}\gamma^k r_{t+k}\mid s_t=s\right],">V^\pi(s)=\mathbb E_\pi\left[\sum_{k=0}^{\infty}\gamma^k r_{t+k}\mid s_t=s\right],</div>
+<div class="math display" data-tex="Q^\pi(s,a)=\mathbb E_\pi\left[\sum_{k=0}^{\infty}\gamma^k r_{t+k}\mid s_t=s,a_t=a\right].">Q^\pi(s,a)=\mathbb E_\pi\left[\sum_{k=0}^{\infty}\gamma^k r_{t+k}\mid s_t=s,a_t=a\right].</div>
+<p><span class="math inline" data-tex="V">V</span> 表示从某状态开始按策略行动的预期得分；<span class="math inline" data-tex="Q">Q</span> 表示第一步指定一个动作，之后再按策略行动的预期得分。</p>
+<p>Bellman 递推为：</p>
+<div class="math display" data-tex="Q^\pi(s,a)=\mathbb E\left[r+\gamma V^\pi(s&#x27;)\right].">Q^\pi(s,a)=\mathbb E\left[r+\gamma V^\pi(s&#x27;)\right].</div>
+<p>这就是“当前收益 + 后续价值”。由于状态和动作可能连续，不能开数组存完整 DP 表，于是用神经网络拟合。Actor 负责选择动作，Critic 负责估值；两者交替改进。</p>
+<h2 id="section-3">3. PPO：好动作多做一点，但每次不要改得太猛</h2>
+<p>PPO-Clip 根据新采样的轨迹更新策略，并通过截断代理目标减少过大更新的激励。<a href="https://arxiv.org/abs/1707.06347">PPO 原论文</a></p>
+<h3>3.1 核心观察：动作好不好，要与当前状态的平均水平比较</h3>
+<p>优势函数为：</p>
+<div class="math display" data-tex="A^\pi(s,a)=Q^\pi(s,a)-V^\pi(s).">A^\pi(s,a)=Q^\pi(s,a)-V^\pi(s).</div>
+<p>若一个状态平均能得 10 分，而选择动作 <span class="math inline" data-tex="a">a</span> 预计能得 13 分，那么优势为 3，应增加它的概率。优势为负则应降低概率。实际训练使用采样得到的估计 <span class="math inline" data-tex="\hat A_t">\hat A_t</span>。</p>
+<h3>3.2 用概率比表示新旧策略的变化</h3>
+<p>采样策略固定为 <span class="math inline" data-tex="\pi_{\mathrm{old}}">\pi_{\mathrm{old}}</span>，待更新策略为 <span class="math inline" data-tex="\pi_\theta">\pi_\theta</span>。定义：</p>
+<div class="math display" data-tex="\rho_t(\theta)=\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\mathrm{old}}(a_t\mid s_t)}.">\rho_t(\theta)=\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\mathrm{old}}(a_t\mid s_t)}.</div>
+<p>若旧概率为 0.2，新概率为 0.3，则比值为 1.5。最大化 <span class="math inline" data-tex="\mathbb E_t[\rho_t\hat A_t]">\mathbb E_t[\rho_t\hat A_t]</span> 会倾向于增加正优势动作的概率、减少负优势动作的概率。但有限样本有噪声，反复优化同一批数据可能改过头。</p>
+<h3>3.3 关键优化：截断继续改进的收益</h3>
+<p>PPO-Clip 最大化：</p>
+<div class="math display" data-tex="L^{\mathrm{clip}}(\theta)=\mathbb E_t\left[\min\left(\rho_t\hat A_t,\operatorname{clip}(\rho_t,1-\epsilon,1+\epsilon)\hat A_t\right)\right].">L^{\mathrm{clip}}(\theta)=\mathbb E_t\left[\min\left(\rho_t\hat A_t,\operatorname{clip}(\rho_t,1-\epsilon,1+\epsilon)\hat A_t\right)\right].</div>
+<p>按优势的正负分类讨论，单个样本的目标为：</p>
+<div class="math display" data-tex="\ell_t=
+\begin{cases}
+\hat A_t\min(\rho_t,1+\epsilon),&amp;\hat A_t\ge0,\\
+\hat A_t\max(\rho_t,1-\epsilon),&amp;\hat A_t&lt;0.
+\end{cases}">\ell_t=
+\begin{cases}
+\hat A_t\min(\rho_t,1+\epsilon),&amp;\hat A_t\ge0,\\
+\hat A_t\max(\rho_t,1-\epsilon),&amp;\hat A_t&lt;0.
+\end{cases}</div>
+<p>好动作的概率增加到一定程度后，不再给额外收益；坏动作的概率降低到一定程度后，也不再给额外收益。若变化方向错误，则仍保留纠正它的激励。</p>
+<p>取 <span class="math inline" data-tex="\epsilon=0.2">\epsilon=0.2</span>、<span class="math inline" data-tex="\hat A=2">\hat A=2</span>：</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>概率比</th>
+<th>普通目标</th>
+<th>PPO 截断目标</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1.0</td>
+<td>2.0</td>
+<td>2.0</td>
+</tr>
+<tr>
+<td>1.1</td>
+<td>2.2</td>
+<td>2.2</td>
+</tr>
+<tr>
+<td>1.5</td>
+<td>3.0</td>
+<td>2.4</td>
+</tr>
+</tbody>
+</table></div>
+<p>截断的是目标中的收益，并非硬性限制真实概率比。共享网络参数、其他样本及多次更新仍可能使概率比超出区间，所以它不保证新旧策略距离一定很小。<a href="https://spinningup.openai.com/en/latest/algorithms/ppo.html">PPO 官方讲解</a></p>
+<h3>3.4 优势估计：一次倒序扫描计算 GAE</h3>
+<p>令 <span class="math inline" data-tex="b_t">b_t</span> 表示是否允许从下一状态 bootstrap，定义 TD 误差：</p>
+<div class="math display" data-tex="\delta_t=r_t+\gamma b_tV_{\mathrm{old}}(s_{t+1})-V_{\mathrm{old}}(s_t).">\delta_t=r_t+\gamma b_tV_{\mathrm{old}}(s_{t+1})-V_{\mathrm{old}}(s_t).</div>
+<p>GAE 可以倒序递推：</p>
+<div class="math display" data-tex="\hat A_t=\delta_t+\gamma\lambda c_t\hat A_{t+1}.">\hat A_t=\delta_t+\gamma\lambda c_t\hat A_{t+1}.</div>
+<p><span class="math inline" data-tex="c_t">c_t</span> 表示是否能继续连接到同一轨迹的下一条采样记录。真正终止时 <span class="math inline" data-tex="b_t=c_t=0">b_t=c_t=0</span>；仅因时间上限截断时，通常允许用最后状态 bootstrap，但不能递推到重置后的新回合。采样段末尾也应停止优势递推。</p>
+<p><span class="math inline" data-tex="\lambda">\lambda</span> 控制多步 TD 信息的权重。价值回归目标可以取：</p>
+<div class="math display" data-tex="\hat R_t=\hat A_t+V_{\mathrm{old}}(s_t),\qquad
+L_V(\phi)=\mathbb E_t[(V_\phi(s_t)-\hat R_t)^2].">\hat R_t=\hat A_t+V_{\mathrm{old}}(s_t),\qquad
+L_V(\phi)=\mathbb E_t[(V_\phi(s_t)-\hat R_t)^2].</div>
+<p>更新时固定优势和回归目标。若要标准化优势，应先用原始优势构造回归目标。</p>
+<h3>3.5 伪代码</h3>
+<pre><code class="language-text">初始化策略 πθ 和价值网络 Vφ
+重复：
+    用当前策略收集 N 步数据
+    保存状态、动作、奖励、边界标记、old_log_prob、old_value
+    倒序计算优势 A
+    R = A + old_value
+
+    重复 K 轮：
+        打乱数据并划分小批次
+        对每个小批次：
+            ratio = exp(new_log_prob - old_log_prob)
+            actor_loss = -mean(min(ratio*A, clip(ratio,1-ε,1+ε)*A))
+            critic_loss = mean((Vφ(s)-R)^2)
+            更新 Actor 和 Critic
+
+    丢弃本批数据，重新采样
+</code></pre>
+<p>PPO 属于 on-policy 方法：同一批新数据可以训练多轮，但通常不长期复用旧轨迹。</p>
+<h2 id="section-4">4. SAC：学一张动作价值表，并保留有价值的探索</h2>
+<p>SAC 将熵纳入学习目标，并使用经验回放。这里采用双 Q 和目标 Q 网络的连续动作版本。<a href="https://arxiv.org/html/1812.05905v2">SAC 论文</a></p>
+<h3>4.1 核心观察：不要过早认定某个动作最好</h3>
+<p>若当前估计两个动作的价值分别为 10 和 9.9，而估值本身还不准确，始终选择前者可能错失后者的真实价值。SAC 在奖励之外加入熵：</p>
+<div class="math display" data-tex="J(\pi)=\mathbb E_\pi\left[\sum_{t=0}^{\infty}\gamma^t\left(r_t+\alpha\mathcal H(\pi(\cdot\mid s_t))\right)\right],">J(\pi)=\mathbb E_\pi\left[\sum_{t=0}^{\infty}\gamma^t\left(r_t+\alpha\mathcal H(\pi(\cdot\mid s_t))\right)\right],</div>
+<div class="math display" data-tex="\mathcal H(\pi(\cdot\mid s))=-\mathbb E_{a\sim\pi}[\log\pi(a\mid s)].">\mathcal H(\pi(\cdot\mid s))=-\mathbb E_{a\sim\pi}[\log\pi(a\mid s)].</div>
+<p><span class="math inline" data-tex="\alpha&gt;0">\alpha&gt;0</span> 控制熵与奖励的相对权重。离散动作的熵反映分布的分散程度；连续动作使用微分熵，其值可以为负。</p>
+<h3>4.2 从 DP 推导 Soft：把 max 换成平滑的选择</h3>
+<p>先考虑有限个动作，令动作概率为 <span class="math inline" data-tex="p_i">p_i</span>。固定 Q 后，需要求解：</p>
+<div class="math display" data-tex="\max_{p_i}\left[\sum_i p_iQ_i-\alpha\sum_i p_i\log p_i\right],\qquad p_i\ge0,\quad\sum_i p_i=1.">\max_{p_i}\left[\sum_i p_iQ_i-\alpha\sum_i p_i\log p_i\right],\qquad p_i\ge0,\quad\sum_i p_i=1.</div>
+<p>引入拉格朗日乘子 <span class="math inline" data-tex="\eta">\eta</span>，求导得到：</p>
+<div class="math display" data-tex="Q_i-\alpha(\log p_i+1)+\eta=0.">Q_i-\alpha(\log p_i+1)+\eta=0.</div>
+<p>因此：</p>
+<div class="math display" data-tex="p_i=\frac{\exp(Q_i/\alpha)}{\sum_j\exp(Q_j/\alpha)}.">p_i=\frac{\exp(Q_i/\alpha)}{\sum_j\exp(Q_j/\alpha)}.</div>
+<p>代回最优值为：</p>
+<div class="math display" data-tex="V(s)=\alpha\log\sum_a\exp(Q(s,a)/\alpha).">V(s)=\alpha\log\sum_a\exp(Q(s,a)/\alpha).</div>
+<p>硬性的最大值变成 log-sum-exp。<span class="math inline" data-tex="\alpha">\alpha</span> 小时更偏向最高价值动作，较大时分布更分散。连续动作下求和变为积分，通常难以直接求解，于是用 Actor 近似这种策略。</p>
+<h3>4.3 Critic 更新：带熵的 Bellman 递推</h3>
+<p>对给定策略，定义：</p>
+<div class="math display" data-tex="V^\pi_{\mathrm{soft}}(s)=\mathbb E_{a\sim\pi}[Q^\pi_{\mathrm{soft}}(s,a)-\alpha\log\pi(a\mid s)].">V^\pi_{\mathrm{soft}}(s)=\mathbb E_{a\sim\pi}[Q^\pi_{\mathrm{soft}}(s,a)-\alpha\log\pi(a\mid s)].</div>
+<p>soft Q 的递推为 <span class="math inline" data-tex="Q^\pi_{\mathrm{soft}}(s,a)=\mathbb E[r+\gamma V^\pi_{\mathrm{soft}}(s&#x27;)]">Q^\pi_{\mathrm{soft}}(s,a)=\mathbb E[r+\gamma V^\pi_{\mathrm{soft}}(s&#x27;)]</span>。这里的 Q 包含未来的熵收益，与只累计环境奖励的普通 Q 不同。</p>
+<p>从经验池抽取 <span class="math inline" data-tex="(s,a,r,s&#x27;,d)">(s,a,r,s&#x27;,d)</span>，用当前策略采样 <span class="math inline" data-tex="a&#x27;\sim\pi_\theta(\cdot\mid s&#x27;)">a&#x27;\sim\pi_\theta(\cdot\mid s&#x27;)</span>，构造：</p>
+<div class="math display" data-tex="y=r+\gamma(1-d)\left[\min_{i=1,2}Q_{\bar\phi_i}(s&#x27;,a&#x27;)-\alpha\log\pi_\theta(a&#x27;\mid s&#x27;)\right].">y=r+\gamma(1-d)\left[\min_{i=1,2}Q_{\bar\phi_i}(s&#x27;,a&#x27;)-\alpha\log\pi_\theta(a&#x27;\mid s&#x27;)\right].</div>
+<p><span class="math inline" data-tex="d">d</span> 表示真正终止。固定目标 <span class="math inline" data-tex="y">y</span>，分别最小化：</p>
+<div class="math display" data-tex="L_{Q_i}=\mathbb E[(Q_{\phi_i}(s,a)-y)^2].">L_{Q_i}=\mathbb E[(Q_{\phi_i}(s,a)-y)^2].</div>
+<p>取两个 Q 的较小值有助于缓解高估，但不是对真实价值的严格下界。目标网络通过缓慢跟随在线网络减少目标波动：</p>
+<div class="math display" data-tex="\bar\phi_i\leftarrow(1-\tau)\bar\phi_i+\tau\phi_i.">\bar\phi_i\leftarrow(1-\tau)\bar\phi_i+\tau\phi_i.</div>
+<h3>4.4 Actor 更新：追求高价值，也保留熵</h3>
+<p>状态从经验池抽取，动作则由当前策略重新生成。最小化：</p>
+<div class="math display" data-tex="L_\pi(\theta)=\mathbb E_{s\sim D,a\sim\pi_\theta}\left[\alpha\log\pi_\theta(a\mid s)-\min_iQ_{\phi_i}(s,a)\right].">L_\pi(\theta)=\mathbb E_{s\sim D,a\sim\pi_\theta}\left[\alpha\log\pi_\theta(a\mid s)-\min_iQ_{\phi_i}(s,a)\right].</div>
+<p>连续动作通常使用重参数化：</p>
+<div class="math display" data-tex="\xi\sim\mathcal N(0,I),\quad u=\mu_\theta(s)+\sigma_\theta(s)\odot\xi,\quad a=\tanh u.">\xi\sim\mathcal N(0,I),\quad u=\mu_\theta(s)+\sigma_\theta(s)\odot\xi,\quad a=\tanh u.</div>
+<p>固定噪声后，动作是策略参数的可微函数，可以沿 <span class="math inline" data-tex="\theta\to a\to Q(s,a)">\theta\to a\to Q(s,a)</span> 反向传播。更新 Actor 时固定 Critic 参数，但保留 Q 对动作的梯度。</p>
+<h3>4.5 为什么能复用历史数据？</h3>
+<p>历史数据记录的是“在 s 执行 a，得到 r，到达 s′”。环境规律不变时，这条经验仍可以帮助拟合 Bellman 递推；下一动作由当前策略生成。因此 SAC 是 off-policy 方法，可以长期使用经验池。数据覆盖不足和估值误差仍会影响效果。</p>
+<h3>4.6 伪代码</h3>
+<p>下面固定温度 α，突出主体流程。</p>
+<pre><code class="language-text">初始化 Actor πθ、两个 Critic Qφ1 和 Qφ2
+复制得到两个目标 Q 网络
+初始化经验池 D
+
+重复：
+    用当前策略采样动作并与环境交互
+    将 (s,a,r,s',terminated) 存入 D
+    回合结束则重置环境
+
+    数据足够时执行若干次更新：
+        从 D 随机抽取小批次
+        不计算梯度：
+            用当前策略在 s' 采样 a'
+            计算带熵的目标 y
+        最小化 (Qφi(s,a)-y)^2，更新两个 Critic
+        在 s 上用当前 Actor 重参数化采样 anew
+        最小化 α logπθ(anew|s)-min Qφi(s,anew)，更新 Actor
+        软更新目标网络
+</code></pre>
+<p>也可以自动调整 α：熵低于目标时增大它，高于目标时减小它。<a href="https://arxiv.org/html/1812.05905v2#S5">自动温度调整</a></p>
+<h2 id="section-5">5. 算法比较与复杂度</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>比较项</th>
+<th>PPO-Clip</th>
+<th>SAC</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>核心设计</td>
+<td>截断策略更新的代理目标</td>
+<td>最大熵目标与经验回放</td>
+</tr>
+<tr>
+<td>Actor 的依据</td>
+<td>轨迹估计的优势</td>
+<td>Q 对当前生成动作的估值</td>
+</tr>
+<tr>
+<td>Critic 常见形式</td>
+<td>V(s)</td>
+<td>两个 Q(s,a)</td>
+</tr>
+<tr>
+<td>数据使用</td>
+<td>新数据训练若干轮后丢弃</td>
+<td>历史经验反复抽样</td>
+</tr>
+<tr>
+<td>动作空间</td>
+<td>离散、连续均可</td>
+<td>本文版本针对连续动作</td>
+</tr>
+<tr>
+<td>熵的地位</td>
+<td>可选的附加奖励</td>
+<td>进入策略目标和价值递推</td>
+</tr>
+</tbody>
+</table></div>
+<p>离散 SAC 需要相应改写，不能直接照搬连续动作的重参数化流程。</p>
+<p>设一次单样本网络训练成本为 C，单条记录大小为 D，忽略不同网络的常数差异：</p>
+<ul>
+<li>PPO 每批 N 条数据训练 K 轮，更新成本约 O(KNC)，数据存储约 O(ND)。</li>
+<li>SAC 每次更新批大小 B，共更新 U 次，成本约 O(UBC)；容量 M 的经验池存储约 O(MD)。</li>
+</ul>
+<p>这些空间估计不包含参数、优化器状态和训练激活。它们描述给定更新次数的计算量，不是收敛到最优策略的步数保证。</p>
+<h2 id="section-6">6. 实现时最容易 WA 的地方</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>算法</th>
+<th>错误</th>
+<th>后果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PPO</td>
+<td>更新期间重新计算旧策略概率</td>
+<td>失去固定参照</td>
+</tr>
+<tr>
+<td>PPO</td>
+<td>最小化截断目标时忘记负号</td>
+<td>优化方向相反</td>
+</tr>
+<tr>
+<td>PPO</td>
+<td>未固定优势和回归目标</td>
+<td>梯度进入不该更新的路径</td>
+</tr>
+<tr>
+<td>PPO</td>
+<td>把 clip 当成概率比的硬约束</td>
+<td>高估对策略变化的限制</td>
+</tr>
+<tr>
+<td>SAC</td>
+<td>Actor 更新使用经验池里的旧动作</td>
+<td>失去通过当前动作生成过程优化的路径</td>
+</tr>
+<tr>
+<td>SAC</td>
+<td>detach 掉 Actor 损失中的整个 Q</td>
+<td>切断 Q 对动作的指导梯度</td>
+</tr>
+<tr>
+<td>SAC</td>
+<td>TD 目标未停止梯度</td>
+<td>目标参与错误更新</td>
+</tr>
+<tr>
+<td>SAC</td>
+<td>tanh 后仍使用原高斯密度</td>
+<td>熵与策略损失错误</td>
+</tr>
+<tr>
+<td>两者</td>
+<td>混淆真正终止和时间截断</td>
+<td>bootstrap 目标错误</td>
+</tr>
+</tbody>
+</table></div>
+<p>对于 <span class="math inline" data-tex="a=\tanh u">a=\tanh u</span>，密度修正为：</p>
+<div class="math display" data-tex="\log\pi(a\mid s)=\log p_U(u\mid s)-\sum_j\log(1-\tanh^2u_j).">\log\pi(a\mid s)=\log p_U(u\mid s)-\sum_j\log(1-\tanh^2u_j).</div>
+<p>实现时需处理数值稳定性；若还要缩放到实际动作范围，应继续考虑变量变换。</p>
+<p>读代码时，优先追踪两条数据流：PPO 从轨迹计算优势，再用概率比与截断目标更新策略；SAC 从经验更新 soft Q，再通过 Q 和熵更新策略。逐项检查哪些量固定、哪些量需要梯度，就能掌握算法主体。</p>
+<h2 id="section-7">参考资料</h2>
+<ol>
+<li>Schulman et al. <a href="https://arxiv.org/abs/1707.06347">Proximal Policy Optimization Algorithms</a>, 2017.</li>
+<li>Haarnoja et al. <a href="https://arxiv.org/abs/1812.05905">Soft Actor-Critic Algorithms and Applications</a>, 2018/2019.</li>
+<li>OpenAI Spinning Up. <a href="https://spinningup.openai.com/en/latest/algorithms/ppo.html">Proximal Policy Optimization</a>.</li>
+</ol>
+<div class="article-end">— 本文完 —</div></article></div></main>
+<footer class="site-footer"><span>tacmon · 把问题想清楚，把过程写下来。</span><a href="https://github.com/tacmon/tacmon.github.io">博客源码 ↗</a></footer></body></html>
