@@ -73,6 +73,101 @@
 </tbody>
 </table></div>
 <p>截断的是目标中的收益，并非硬性限制真实概率比。共享网络参数、其他样本及多次更新仍可能使概率比超出区间，所以它不保证新旧策略距离一定很小。<a href="https://spinningup.openai.com/en/latest/algorithms/ppo.html">PPO 官方讲解</a></p>
+<h3>样例 1：PPO 的正、负优势到底怎么截断？</h3>
+<p><strong>样例输入</strong></p>
+<p>令 <span class="math inline" data-tex="\epsilon=0.2">\epsilon=0.2</span>。以下四行代表四条独立采样记录，优势已经算好，且不做优势标准化。为便于理解，使用离散动作的概率。</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>记录</th>
+<th>旧概率</th>
+<th>新概率</th>
+<th>优势 <span class="math inline" data-tex="\hat A">\hat A</span></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A：好动作，概率增加很多</td>
+<td>0.20</td>
+<td>0.30</td>
+<td>2</td>
+</tr>
+<tr>
+<td>B：坏动作，概率降低很多</td>
+<td>0.50</td>
+<td>0.30</td>
+<td>-2</td>
+</tr>
+<tr>
+<td>C：坏动作，概率反而增加</td>
+<td>0.20</td>
+<td>0.30</td>
+<td>-2</td>
+</tr>
+<tr>
+<td>D：好动作，概率反而降低</td>
+<td>0.50</td>
+<td>0.30</td>
+<td>2</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>样例输出</strong></p>
+<p>计算单条记录的代理目标 <span class="math inline" data-tex="\ell">\ell</span>，然后计算四条记录组成的小批次 Actor 损失：</p>
+<pre><code class="language-text">ell_A =  2.4
+ell_B = -1.6
+ell_C = -3.0
+ell_D =  1.2
+L_clip = -0.25
+actor_loss = 0.25
+</code></pre>
+<p><strong>样例解释</strong></p>
+<p>截断区间为 <span class="math inline" data-tex="[0.8,1.2]">[0.8,1.2]</span>。</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>记录</th>
+<th>概率比 <span class="math inline" data-tex="\rho">\rho</span></th>
+<th><span class="math inline" data-tex="\rho\hat A">\rho\hat A</span></th>
+<th><span class="math inline" data-tex="\operatorname{clip}(\rho)\hat A">\operatorname{clip}(\rho)\hat A</span></th>
+<th>两者较小值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A</td>
+<td>1.5</td>
+<td>3.0</td>
+<td>2.4</td>
+<td>2.4</td>
+</tr>
+<tr>
+<td>B</td>
+<td>0.6</td>
+<td>-1.2</td>
+<td>-1.6</td>
+<td>-1.6</td>
+</tr>
+<tr>
+<td>C</td>
+<td>1.5</td>
+<td>-3.0</td>
+<td>-2.4</td>
+<td>-3.0</td>
+</tr>
+<tr>
+<td>D</td>
+<td>0.6</td>
+<td>1.2</td>
+<td>1.6</td>
+<td>1.2</td>
+</tr>
+</tbody>
+</table></div>
+<p>A、B 朝有利方向变化，但超过阈值后，本条记录不再奖励继续变化。C、D 朝不利方向变化，仍保留纠正它们的激励。特别注意 B：乘以负优势后，不能直接把“取较小值”理解为“取较小概率比”。</p>
+<p>小批次目标为：</p>
+<div class="math display" data-tex="L^{\mathrm{clip}}=\frac{2.4-1.6-3.0+1.2}{4}=-0.25.">L^{\mathrm{clip}}=\frac{2.4-1.6-3.0+1.2}{4}=-0.25.</div>
+<p>优化器做梯度下降，所以使用 <span class="math inline" data-tex="L_{\mathrm{actor}}=-L^{\mathrm{clip}}=0.25">L_{\mathrm{actor}}=-L^{\mathrm{clip}}=0.25</span>。这里没有加入熵奖励或价值损失。损失可以为负，绝对数值本身不代表策略好坏；它服务于本批数据上的梯度更新。</p>
 <h3>3.4 优势估计：一次倒序扫描计算 GAE</h3>
 <p>令 <span class="math inline" data-tex="b_t">b_t</span> 表示是否允许从下一状态 bootstrap，定义 TD 误差：</p>
 <div class="math display" data-tex="\delta_t=r_t+\gamma b_tV_{\mathrm{old}}(s_{t+1})-V_{\mathrm{old}}(s_t).">\delta_t=r_t+\gamma b_tV_{\mathrm{old}}(s_{t+1})-V_{\mathrm{old}}(s_t).</div>
@@ -84,6 +179,69 @@
 L_V(\phi)=\mathbb E_t[(V_\phi(s_t)-\hat R_t)^2].">\hat R_t=\hat A_t+V_{\mathrm{old}}(s_t),\qquad
 L_V(\phi)=\mathbb E_t[(V_\phi(s_t)-\hat R_t)^2].</div>
 <p>更新时固定优势和回归目标。若要标准化优势，应先用原始优势构造回归目标。</p>
+<h3>样例 2：一条三步轨迹，手算 GAE 和价值目标</h3>
+<p><strong>样例输入</strong></p>
+<p>轨迹为 <span class="math inline" data-tex="s_0\to s_1\to s_2\to s_3">s_0\to s_1\to s_2\to s_3</span>，在 <span class="math inline" data-tex="s_3">s_3</span> 真正终止。取 <span class="math inline" data-tex="\gamma=0.9">\gamma=0.9</span>、<span class="math inline" data-tex="\lambda=0.8">\lambda=0.8</span>，所以 <span class="math inline" data-tex="\gamma\lambda=0.72">\gamma\lambda=0.72</span>。</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>时刻 <span class="math inline" data-tex="t">t</span></th>
+<th>奖励 <span class="math inline" data-tex="r_t">r_t</span></th>
+<th>旧价值 <span class="math inline" data-tex="V(s_t)">V(s_t)</span></th>
+<th>下一状态旧价值</th>
+<th><span class="math inline" data-tex="b_t">b_t</span></th>
+<th><span class="math inline" data-tex="c_t">c_t</span></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>1</td>
+<td>2</td>
+<td>3</td>
+<td>1</td>
+<td>1</td>
+</tr>
+<tr>
+<td>1</td>
+<td>0</td>
+<td>3</td>
+<td>4</td>
+<td>1</td>
+<td>1</td>
+</tr>
+<tr>
+<td>2</td>
+<td>5</td>
+<td>4</td>
+<td>0（终止）</td>
+<td>0</td>
+<td>0</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>样例输出</strong></p>
+<pre><code class="language-text">TD误差 δ = [1.7000, 0.6000, 1.0000]
+优势   A = [2.6504, 1.3200, 1.0000]
+价值目标 R = [4.6504, 4.3200, 5.0000]
+</code></pre>
+<p><strong>样例解释</strong></p>
+<p>先计算每一步的 TD 误差：</p>
+<div class="math display" data-tex="\delta_0=1+0.9\times3-2=1.7,\qquad
+\delta_1=0+0.9\times4-3=0.6,\qquad
+\delta_2=5-4=1.">\delta_0=1+0.9\times3-2=1.7,\qquad
+\delta_1=0+0.9\times4-3=0.6,\qquad
+\delta_2=5-4=1.</div>
+<p>再从后往前扫描：</p>
+<div class="math display" data-tex="\hat A_2=1,\qquad
+\hat A_1=0.6+0.72\times1=1.32,\qquad
+\hat A_0=1.7+0.72\times1.32=2.6504.">\hat A_2=1,\qquad
+\hat A_1=0.6+0.72\times1=1.32,\qquad
+\hat A_0=1.7+0.72\times1.32=2.6504.</div>
+<p>最后逐项加上旧价值，得到价值网络的回归目标。Actor 使用优势判断动作是否好于预期，Critic 使用价值目标修正估值。</p>
+<p><strong>边界变式：如果最后一步只是时间上限截断呢？</strong> 假设最后观测的价值为 <span class="math inline" data-tex="V(s_3)=6">V(s_3)=6</span>，任务本身没有终止，则最后一步使用 <span class="math inline" data-tex="b_2=1,c_2=0">b_2=1,c_2=0</span>：</p>
+<div class="math display" data-tex="\delta_2=5+0.9\times6-4=6.4,\qquad \hat A_2=6.4.">\delta_2=5+0.9\times6-4=6.4,\qquad \hat A_2=6.4.</div>
+<p>可以利用最后观测的价值，但不能把重置后新回合的优势接到这条轨迹上。</p>
 <h3>3.5 伪代码</h3>
 <pre><code class="language-text">初始化策略 πθ 和价值网络 Vφ
 重复：
@@ -130,12 +288,76 @@ L_V(\phi)=\mathbb E_t[(V_\phi(s_t)-\hat R_t)^2].</div>
 <div class="math display" data-tex="L_{Q_i}=\mathbb E[(Q_{\phi_i}(s,a)-y)^2].">L_{Q_i}=\mathbb E[(Q_{\phi_i}(s,a)-y)^2].</div>
 <p>取两个 Q 的较小值有助于缓解高估，但不是对真实价值的严格下界。目标网络通过缓慢跟随在线网络减少目标波动：</p>
 <div class="math display" data-tex="\bar\phi_i\leftarrow(1-\tau)\bar\phi_i+\tau\phi_i.">\bar\phi_i\leftarrow(1-\tau)\bar\phi_i+\tau\phi_i.</div>
+<h3>样例 3：一条经验如何更新 SAC 的两个 Critic？</h3>
+<p><strong>样例输入</strong></p>
+<p>从经验池取出一条非终止经验。当前策略已在下一状态采样动作 <span class="math inline" data-tex="a&#x27;">a&#x27;</span>，相关数值如下：</p>
+<pre><code class="language-text">r = 1, gamma = 0.9, alpha = 0.2, d = 0
+Q_target1(s', a') = 4
+Q_target2(s', a') = 5
+log π(a' | s') = -0.5
+Q1(s, a) = 3
+Q2(s, a) = 4.5
+</code></pre>
+<p><strong>样例输出</strong></p>
+<pre><code class="language-text">soft_next_value = 4.1
+y = 4.69
+loss_Q1 = 2.8561
+loss_Q2 = 0.0361
+</code></pre>
+<p><strong>样例解释</strong></p>
+<p>先取两个目标 Q 的较小值，再减去温度乘以对数密度：</p>
+<div class="math display" data-tex="\min(4,5)-0.2\times(-0.5)=4.1.">\min(4,5)-0.2\times(-0.5)=4.1.</div>
+<p>于是目标为：</p>
+<div class="math display" data-tex="y=1+0.9\times4.1=4.69.">y=1+0.9\times4.1=4.69.</div>
+<p>本文使用不带 <span class="math inline" data-tex="1/2">1/2</span> 系数的平方误差，单条样本的两个损失分别为：</p>
+<div class="math display" data-tex="L_{Q_1}=(3-4.69)^2=2.8561,\qquad
+L_{Q_2}=(4.5-4.69)^2=0.0361.">L_{Q_1}=(3-4.69)^2=2.8561,\qquad
+L_{Q_2}=(4.5-4.69)^2=0.0361.</div>
+<p>两个估值都低于目标，因此本条样本推动它们增大。若仅把单个 Q 输出视为待优化标量，则导数分别为 <span class="math inline" data-tex="-3.38">-3.38</span> 和 <span class="math inline" data-tex="-0.38">-0.38</span>；实际神经网络还要通过链式法则更新参数，不能把这个导数当成参数更新量。</p>
+<p><strong>边界变式：如果这一步真正终止，令 <span class="math inline" data-tex="d=1">d=1</span>。</strong> 此时 <span class="math inline" data-tex="y=r=1">y=r=1</span>，两个平方误差变为 <span class="math inline" data-tex="4">4</span> 和 <span class="math inline" data-tex="12.25">12.25</span>，不再计入下一状态的价值或熵。</p>
 <h3>4.4 Actor 更新：追求高价值，也保留熵</h3>
 <p>状态从经验池抽取，动作则由当前策略重新生成。最小化：</p>
 <div class="math display" data-tex="L_\pi(\theta)=\mathbb E_{s\sim D,a\sim\pi_\theta}\left[\alpha\log\pi_\theta(a\mid s)-\min_iQ_{\phi_i}(s,a)\right].">L_\pi(\theta)=\mathbb E_{s\sim D,a\sim\pi_\theta}\left[\alpha\log\pi_\theta(a\mid s)-\min_iQ_{\phi_i}(s,a)\right].</div>
 <p>连续动作通常使用重参数化：</p>
 <div class="math display" data-tex="\xi\sim\mathcal N(0,I),\quad u=\mu_\theta(s)+\sigma_\theta(s)\odot\xi,\quad a=\tanh u.">\xi\sim\mathcal N(0,I),\quad u=\mu_\theta(s)+\sigma_\theta(s)\odot\xi,\quad a=\tanh u.</div>
 <p>固定噪声后，动作是策略参数的可微函数，可以沿 <span class="math inline" data-tex="\theta\to a\to Q(s,a)">\theta\to a\to Q(s,a)</span> 反向传播。更新 Actor 时固定 Critic 参数，但保留 Q 对动作的梯度。</p>
+<h3>样例 4：SAC 的 Actor 损失为何可能偏好更随机的策略？</h3>
+<p><strong>样例输入</strong></p>
+<p>取 <span class="math inline" data-tex="\alpha=0.2">\alpha=0.2</span>。同一个状态下，分别检查两个候选策略的一次动作采样，表中的 Q 均已取两个 Critic 的较小值。连续动作使用概率密度，给出的 log 值假设已经包含动作变换的密度修正。</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>候选策略的一次采样</th>
+<th><span class="math inline" data-tex="\min Q(s,a)">\min Q(s,a)</span></th>
+<th><span class="math inline" data-tex="\log\pi(a\mid s)">\log\pi(a\mid s)</span></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P</td>
+<td>4.0</td>
+<td>-0.5</td>
+</tr>
+<tr>
+<td>R</td>
+<td>3.9</td>
+<td>-1.5</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>样例输出</strong></p>
+<pre><code class="language-text">sample_loss_P = -4.1
+sample_loss_R = -4.2
+本次采样的损失：R 更小
+</code></pre>
+<p><strong>样例解释</strong></p>
+<p>代入 <span class="math inline" data-tex="\alpha\log\pi-Q">\alpha\log\pi-Q</span>：</p>
+<div class="math display" data-tex="\ell_P=0.2\times(-0.5)-4=-4.1,\qquad
+\ell_R=0.2\times(-1.5)-3.9=-4.2.">\ell_P=0.2\times(-0.5)-4=-4.1,\qquad
+\ell_R=0.2\times(-1.5)-3.9=-4.2.</div>
+<p>R 的 Q 低了 0.1，但本次采样的熵项让损失降低了 0.2，合起来仍低了 0.1。这展示了奖励价值与熵之间的权衡。</p>
+<p><strong>不能由一个动作的低密度断言整个策略熵更大，也不能凭这两次采样判定 R 整体更优。</strong> 真正的 Actor 目标是对状态和本策略动作取期望；实现中用小批次采样近似这个期望，并反向传播，而不是在两个候选动作中直接选损失最小者。</p>
+<p>若只为检查公式，把 <span class="math inline" data-tex="\alpha">\alpha</span> 改为 0 并固定表中 Q 和 log 值，则两次采样损失变成 <span class="math inline" data-tex="-4.0">-4.0</span>、<span class="math inline" data-tex="-3.9">-3.9</span>，此时 P 更小。完整训练中改变温度也会改变策略和 soft Q，不能把这组固定数值当成最终训练结果。</p>
 <h3>4.5 为什么能复用历史数据？</h3>
 <p>历史数据记录的是“在 s 执行 a，得到 r，到达 s′”。环境规律不变时，这条经验仍可以帮助拟合 Bellman 递推；下一动作由当前策略生成。因此 SAC 是 off-policy 方法，可以长期使用经验池。数据覆盖不足和估值误差仍会影响效果。</p>
 <h3>4.6 伪代码</h3>
