@@ -51,13 +51,66 @@
 <div class="math display" data-tex="V^\pi(s)=\mathbb E_\pi\left[\sum_{k=0}^{\infty}\gamma^k R_{t+k}\;\middle|\;S_t=s\right],">V^\pi(s)=\mathbb E_\pi\left[\sum_{k=0}^{\infty}\gamma^k R_{t+k}\;\middle|\;S_t=s\right],</div>
 <div class="math display" data-tex="Q^\pi(s,a)=\mathbb E_\pi\left[\sum_{k=0}^{\infty}\gamma^k R_{t+k}\;\middle|\;S_t=s,A_t=a\right].">Q^\pi(s,a)=\mathbb E_\pi\left[\sum_{k=0}^{\infty}\gamma^k R_{t+k}\;\middle|\;S_t=s,A_t=a\right].</div>
 <p>竖线右侧是取期望时固定的条件。<span class="math inline" data-tex="V^\pi(s)">V^\pi(s)</span> 从当前这一步起就按策略选动作；<span class="math inline" data-tex="Q^\pi(s,a)">Q^\pi(s,a)</span> 则把第一步动作固定为 <span class="math inline" data-tex="a">a</span>，之后才按策略选动作。这里对 Q 的定义应理解为从 <span class="math inline" data-tex="s">s</span> 出发主动执行指定动作 <span class="math inline" data-tex="a">a</span>，并不要求策略当前一定会采样到它。</p>
-<h3>2.2 Bellman 递推：动作没有消失，而是影响奖励与转移</h3>
+<h3>2.2 Q 已经固定了动作，为什么还需要期望？</h3>
+<p><strong>固定当前动作，不等于固定整个未来。</strong> 在 Q 的定义中，只固定 <span class="math inline" data-tex="S_t=s,A_t=a">S_t=s,A_t=a</span>；从下一步开始，动作仍由策略采样，环境也仍然可能产生随机结果。</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>随机性的来源</th>
+<th>V 的定义中</th>
+<th>Q 的定义中</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>当前动作 <span class="math inline" data-tex="A_t">A_t</span></td>
+<td>按 <span class="math inline" data-tex="\pi(\cdot\mid s)">\pi(\cdot\mid s)</span> 采样</td>
+<td>固定为输入 a，不再采样</td>
+</tr>
+<tr>
+<td>当前奖励与下一状态</td>
+<td>由环境产生，可能随机</td>
+<td>即使固定 s、a，仍可能随机</td>
+</tr>
+<tr>
+<td>后续动作 <span class="math inline" data-tex="A_{t+1},A_{t+2},\ldots">A_{t+1},A_{t+2},\ldots</span></td>
+<td>按策略采样</td>
+<td>同样按策略采样</td>
+</tr>
+<tr>
+<td>后续奖励与状态转移</td>
+<td>由环境产生，可能随机</td>
+<td>同样由环境产生，可能随机</td>
+</tr>
+</tbody>
+</table></div>
+<p>可以把 Q 对应的轨迹生成过程写成：</p>
+<pre><code class="language-text">固定 S_t = s，A_t = a
+环境根据 (s, a) 产生 (R_t, S_{t+1})
+策略根据 S_{t+1} 采样 A_{t+1}
+环境根据 (S_{t+1}, A_{t+1}) 产生 (R_{t+1}, S_{t+2})
+继续交替，得到一条可能的未来轨迹
+对这些轨迹的折扣回报按其概率取平均，得到 Qπ(s,a)
+</code></pre>
+<p>因此，V 和 Q 的期望都涉及环境与策略两方面；区别是 Q 不对第一步动作求平均。策略随机性不一定导致回报不同，例如两个动作可能给出相同回报；但定义仍然成立。给定环境、策略和输入后，V、Q 是确定的期望值，随机的是采样轨迹和用有限样本算出的估计。</p>
+<p><strong>当前奖励能不能提出期望？先看奖励的定义。</strong></p>
+<p>当前奖励在折扣和中的系数为 <span class="math inline" data-tex="\gamma^0=1">\gamma^0=1</span>，所以首项是 <span class="math inline" data-tex="R_t">R_t</span>，不是 <span class="math inline" data-tex="\gamma R_t">\gamma R_t</span>；下一步奖励才乘 <span class="math inline" data-tex="\gamma">\gamma</span>。</p>
+<p>如果环境明确规定奖励是确定函数 <span class="math inline" data-tex="R_t=r(S_t,A_t)">R_t=r(S_t,A_t)</span>，那么固定 s、a 后，可以写成：</p>
+<div class="math display" data-tex="Q^\pi(s,a)=r(s,a)+\mathbb E_\pi\left[\sum_{k=1}^{\infty}\gamma^kR_{t+k}\;\middle|\;S_t=s,A_t=a\right].">Q^\pi(s,a)=r(s,a)+\mathbb E_\pi\left[\sum_{k=1}^{\infty}\gamma^kR_{t+k}\;\middle|\;S_t=s,A_t=a\right].</div>
+<p>将这个常数留在期望里面也完全正确，因为期望具有线性性质。</p>
+<p>如果奖励还依赖随机的下一状态，例如 <span class="math inline" data-tex="R_t=r(s,a,S_{t+1})">R_t=r(s,a,S_{t+1})</span>，或奖励机制本身含噪声，则固定 s、a 后，当前奖励仍可能随机。即使状态转移完全确定，随机奖励机制也可能使回报随机。一般情况下应拆成：</p>
+<div class="math display" data-tex="Q^\pi(s,a)=\mathbb E[R_t\mid S_t=s,A_t=a]
++\mathbb E_\pi\left[\sum_{k=1}^{\infty}\gamma^kR_{t+k}\;\middle|\;S_t=s,A_t=a\right].">Q^\pi(s,a)=\mathbb E[R_t\mid S_t=s,A_t=a]
++\mathbb E_\pi\left[\sum_{k=1}^{\infty}\gamma^kR_{t+k}\;\middle|\;S_t=s,A_t=a\right].</div>
+<p>注意，有些资料把奖励的条件期望也记作 r(s,a)。此时 r(s,a) 是确定的平均值，并不意味着实际采样得到的奖励每次相同。本文用 <span class="math inline" data-tex="\bar r(s,a)">\bar r(s,a)</span> 标记这个平均值。随机奖励与随机状态转移都属于环境随机性，两者可以相关，不要求相互独立。</p>
+<h3>2.3 Bellman 递推：动作没有消失，而是影响奖励与转移</h3>
 <p>把总回报拆成“第一步奖励 + 折扣后的剩余回报”：</p>
 <div class="math display" data-tex="\sum_{k=0}^{\infty}\gamma^kR_{t+k}
 =R_t+\gamma\sum_{j=0}^{\infty}\gamma^jR_{t+1+j}.">\sum_{k=0}^{\infty}\gamma^kR_{t+k}
 =R_t+\gamma\sum_{j=0}^{\infty}\gamma^jR_{t+1+j}.</div>
 <p>执行当前动作、到达下一状态后，后续按策略行动的预期回报就是该状态的 V 值。因此：</p>
 <div class="math display" data-tex="\boxed{Q^\pi(s,a)=\mathbb E\left[R_t+\gamma V^\pi(S_{t+1})\;\middle|\;S_t=s,A_t=a\right].}">\boxed{Q^\pi(s,a)=\mathbb E\left[R_t+\gamma V^\pi(S_{t+1})\;\middle|\;S_t=s,A_t=a\right].}</div>
+<p>这个一步递推与完整回报的期望，分工稍有不同：对于一个固定的下一状态，<span class="math inline" data-tex="V^\pi(s&#x27;)">V^\pi(s&#x27;)</span> 已经把从那里开始的策略采样和环境随机性平均过了。所以 Bellman 公式外层的期望只需对第一步环境产生的 <span class="math inline" data-tex="(R_t,S_{t+1})">(R_t,S_{t+1})</span> 求平均，不必再次显式展开后续所有动作。完整定义中的“整条未来轨迹的平均”，被拆成了外层的一步平均和 V 内部的后续平均。</p>
 <p><strong>右侧仍然依赖动作 a。</strong> 当前奖励和下一状态的分布，都由“在 s 执行 a”决定。不能在尚未约定分布时，直接省略右侧的条件，否则容易误以为右侧与 a 无关。</p>
 <p>把右侧的依赖写得更显式。对于离散状态，定义：</p>
 <div class="math display" data-tex="\bar r(s,a)=\mathbb E[R_t\mid S_t=s,A_t=a],">\bar r(s,a)=\mathbb E[R_t\mid S_t=s,A_t=a],</div>
