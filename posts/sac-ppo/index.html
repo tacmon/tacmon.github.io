@@ -274,43 +274,80 @@ A^\pi(s,\text{右})=4-10=-6.</div>
 <p>截断的是目标中的收益，并非硬性限制真实概率比。共享网络参数、其他样本及多次更新仍可能使概率比超出区间，所以它不保证新旧策略距离一定很小。<a href="https://spinningup.openai.com/en/latest/algorithms/ppo.html">PPO 官方讲解</a></p>
 <h3>样例 1：PPO 的正、负优势到底怎么截断？</h3>
 <p><strong>样例输入</strong></p>
-<p>令 <span class="math inline" data-tex="\epsilon=0.2">\epsilon=0.2</span>。以下四行代表四条独立采样记录，优势已经算好，且不做优势标准化。为便于理解，使用离散动作的概率。</p>
+<p>令 <span class="math inline" data-tex="\epsilon=0.2">\epsilon=0.2</span>。以下四行是四条采样记录，分别来自不同状态 <span class="math inline" data-tex="s_A,s_B,s_C,s_D">s_A,s_B,s_C,s_D</span>；它们不是同一个状态下的四个候选动作。优势已经算好，且不做优势标准化。</p>
+<p>为明确概率含义，假设每个状态只有两个动作 <span class="math inline" data-tex="a_0,a_1">a_0,a_1</span>，这四条记录中恰好都采样到了 <span class="math inline" data-tex="a_0">a_0</span>。表中的旧、新概率分别是该状态下 <span class="math inline" data-tex="\pi_{\mathrm{old}}(a_0\mid s)">\pi_{\mathrm{old}}(a_0\mid s)</span> 和 <span class="math inline" data-tex="\pi_\theta(a_0\mid s)">\pi_\theta(a_0\mid s)</span>。</p>
 <div class="table-wrap"><table>
 <thead>
 <tr>
-<th>记录</th>
-<th>旧概率</th>
-<th>新概率</th>
+<th>记录及状态</th>
+<th>旧策略对已采样动作的概率</th>
+<th>新策略对同一动作的概率</th>
 <th>优势 <span class="math inline" data-tex="\hat A">\hat A</span></th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>A：好动作，概率增加很多</td>
+<td>A，<span class="math inline" data-tex="s_A">s_A</span>：好动作，概率增加很多</td>
 <td>0.20</td>
 <td>0.30</td>
 <td>2</td>
 </tr>
 <tr>
-<td>B：坏动作，概率降低很多</td>
+<td>B，<span class="math inline" data-tex="s_B">s_B</span>：坏动作，概率降低很多</td>
 <td>0.50</td>
 <td>0.30</td>
 <td>-2</td>
 </tr>
 <tr>
-<td>C：坏动作，概率反而增加</td>
+<td>C，<span class="math inline" data-tex="s_C">s_C</span>：坏动作，概率反而增加</td>
 <td>0.20</td>
 <td>0.30</td>
 <td>-2</td>
 </tr>
 <tr>
-<td>D：好动作，概率反而降低</td>
+<td>D，<span class="math inline" data-tex="s_D">s_D</span>：好动作，概率反而降低</td>
 <td>0.50</td>
 <td>0.30</td>
 <td>2</td>
 </tr>
 </tbody>
 </table></div>
+<p><strong>为什么这一列的概率之和不是 1？</strong> 概率归一化要求是：固定一个状态，把该状态下所有可能动作的概率相加等于 1：</p>
+<div class="math display" data-tex="\sum_{a\in\mathcal A}\pi(a\mid s)=1.">\sum_{a\in\mathcal A}\pi(a\mid s)=1.</div>
+<p>上表固定的是每条记录中已采样的动作，不同行的条件状态不同，所以不能沿这一列求和检查归一化。即使多条记录来自同一状态，只要动作有重复或没有覆盖全部动作，记录中的概率之和也不必等于 1。</p>
+<p>把没有采样到的动作概率补齐，本例可以对应以下合法的策略分布。每个括号依次表示动作 <span class="math inline" data-tex="a_0,a_1">a_0,a_1</span> 的概率：</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>状态</th>
+<th>旧策略完整分布</th>
+<th>新策略完整分布</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="math inline" data-tex="s_A">s_A</span></td>
+<td>(0.20, 0.80)</td>
+<td>(0.30, 0.70)</td>
+</tr>
+<tr>
+<td><span class="math inline" data-tex="s_B">s_B</span></td>
+<td>(0.50, 0.50)</td>
+<td>(0.30, 0.70)</td>
+</tr>
+<tr>
+<td><span class="math inline" data-tex="s_C">s_C</span></td>
+<td>(0.20, 0.80)</td>
+<td>(0.30, 0.70)</td>
+</tr>
+<tr>
+<td><span class="math inline" data-tex="s_D">s_D</span></td>
+<td>(0.50, 0.50)</td>
+<td>(0.30, 0.70)</td>
+</tr>
+</tbody>
+</table></div>
+<p>每个括号内的概率和都是 1。PPO 计算当前记录的概率比时，只取同一状态、同一已采样动作对应的两个概率。例如记录 A 使用 <span class="math inline" data-tex="0.30/0.20=1.5">0.30/0.20=1.5</span>；动作 <span class="math inline" data-tex="a_1">a_1</span> 的概率用于构成完整分布，不参与这条记录的概率比计算。</p>
 <p><strong>样例输出</strong></p>
 <p>计算单条记录的代理目标 <span class="math inline" data-tex="\ell">\ell</span>，然后计算四条记录组成的小批次 Actor 损失：</p>
 <pre><code class="language-text">ell_A =  2.4
