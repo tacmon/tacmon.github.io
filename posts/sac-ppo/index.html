@@ -226,10 +226,104 @@ A^\pi(s,\text{右})=4-10=-6.</div>
 =0.9\times2+0.1\times(-6)=1.2&gt;0.</div>
 <p>这个值表示：只改变当前一步的动作选择、后续仍按旧策略行动时，相对旧状态价值的预期提升。它不是整套新策略的完整价值增量。若重新计算新策略自己的真实优势，其在新策略下的期望仍然为零。因此，“优势均值为零”与“可以通过改变策略提高回报”并不矛盾。</p>
 <p><strong>实际训练中的区别。</strong> 上述恒等式针对同一策略的真实 Q、V 和优势。有限采样得到的优势，即便使用真实优势，其样本均值也不一定恰好为零；实际 <span class="math inline" data-tex="\hat A_t">\hat A_t</span> 还受到价值估计误差等因素影响。实现中对一批优势减去样本均值，是额外的标准化操作，不是这个理论恒等式自动保证的结果。</p>
-<h3>3.2 用概率比表示新旧策略的变化</h3>
-<p>采样策略固定为 <span class="math inline" data-tex="\pi_{\mathrm{old}}">\pi_{\mathrm{old}}</span>，待更新策略为 <span class="math inline" data-tex="\pi_\theta">\pi_\theta</span>。定义：</p>
-<div class="math display" data-tex="\rho_t(\theta)=\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\mathrm{old}}(a_t\mid s_t)}.">\rho_t(\theta)=\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\mathrm{old}}(a_t\mid s_t)}.</div>
-<p>若旧概率为 0.2，新概率为 0.3，则比值为 1.5。最大化 <span class="math inline" data-tex="\mathbb E_t[\rho_t\hat A_t]">\mathbb E_t[\rho_t\hat A_t]</span> 会倾向于增加正优势动作的概率、减少负优势动作的概率。但有限样本有噪声，反复优化同一批数据可能改过头。</p>
+<h3>3.2 从策略模型的输出，到新旧策略的概率比</h3>
+<p>前面把策略写成 <span class="math inline" data-tex="\pi_\theta(a\mid s)">\pi_\theta(a\mid s)</span>。现在把它落实到模型：<strong>它表示参数为 θ 的 Actor 在状态 s 下选择动作 a 的概率，而不是动作获得高分的概率。</strong></p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>符号</th>
+<th>在模型中的角色</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>s</td>
+<td>输入：环境观测到的状态，通常编码成一个向量</td>
+</tr>
+<tr>
+<td>θ</td>
+<td>策略网络的可训练参数，例如各层的权重和偏置</td>
+</tr>
+<tr>
+<td>a</td>
+<td>要查询概率的动作；在训练记录中，是当时实际采样并执行的动作</td>
+</tr>
+<tr>
+<td><span class="math inline" data-tex="\pi_\theta(\cdot\mid s)">\pi_\theta(\cdot\mid s)</span></td>
+<td>模型在状态 s 下给出的完整动作分布</td>
+</tr>
+<tr>
+<td><span class="math inline" data-tex="\pi_\theta(a\mid s)">\pi_\theta(a\mid s)</span></td>
+<td>从完整分布中取出动作 a 对应的概率</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>离散动作模型：状态 → 网络分数 → softmax → 动作分布。</strong></p>
+<p>假设有 m 个动作 <span class="math inline" data-tex="a_0,\ldots,a_{m-1}">a_0,\ldots,a_{m-1}</span>，一种常见实现是让网络接收状态，输出每个动作对应的一个实数分数（logit）：</p>
+<div class="math display" data-tex="z=f_\theta(s)=(z_0,z_1,\ldots,z_{m-1}).">z=f_\theta(s)=(z_0,z_1,\ldots,z_{m-1}).</div>
+<p>这些分数本身不是概率，也不是 Q 值。再用 softmax 转换成概率：</p>
+<div class="math display" data-tex="\boxed{\pi_\theta(a_i\mid s)=\frac{\exp(z_i)}{\sum_{j=0}^{m-1}\exp(z_j)}.}">\boxed{\pi_\theta(a_i\mid s)=\frac{\exp(z_i)}{\sum_{j=0}^{m-1}\exp(z_j)}.}</div>
+<p>因此，固定同一个状态时，所有动作的概率之和自动等于 1。这里是“网络输入 s，输出全部动作的分布，再用 a 查询对应分量”；不需要把动作 a 也当作这个离散策略网络的输入。</p>
+<p>得到分布后，可以按它采样动作：</p>
+<div class="math display" data-tex="a_t\sim\pi_\theta(\cdot\mid s_t).">a_t\sim\pi_\theta(\cdot\mid s_t).</div>
+<p><strong>查询概率与采样动作是两件事。</strong> 比如先得到分布 (0.2, 0.8)，再按这个分布抽到动作 <span class="math inline" data-tex="a_0">a_0</span>，记录下来的动作概率就是 0.2。这个数字由模型计算出来，不是统计本批记录中该动作出现的次数得到的。概率 0.2 也不表示每五次采样必定出现一次。</p>
+<p><strong>旧策略与新策略：相同状态、相同动作，不同参数。</strong></p>
+<p>PPO 用旧参数 <span class="math inline" data-tex="\theta_{\mathrm{old}}">\theta_{\mathrm{old}}</span> 与环境交互，保存每条记录的状态、动作及其旧对数概率。随后在这批数据上更新参数 θ，并重新评价同一条记录：</p>
+<div class="math display" data-tex="p_{\mathrm{old}}=\pi_{\theta_{\mathrm{old}}}(a_t\mid s_t),\qquad
+p_{\mathrm{new}}=\pi_\theta(a_t\mid s_t).">p_{\mathrm{old}}=\pi_{\theta_{\mathrm{old}}}(a_t\mid s_t),\qquad
+p_{\mathrm{new}}=\pi_\theta(a_t\mid s_t).</div>
+<p>这里 <span class="math inline" data-tex="\pi_{\mathrm{old}}">\pi_{\mathrm{old}}</span> 是 <span class="math inline" data-tex="\pi_{\theta_{\mathrm{old}}}">\pi_{\theta_{\mathrm{old}}}</span> 的简写。两者通常使用相同的网络结构，只是参数版本不同。旧参数或保存的旧概率保持固定；新参数在优化过程中变化。刚开始更新这批数据、两套参数还相同时，概率比为 1。</p>
+<p>定义新旧策略的概率比：</p>
+<div class="math display" data-tex="\boxed{\rho_t(\theta)=\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\mathrm{old}}(a_t\mid s_t)}.}">\boxed{\rho_t(\theta)=\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\mathrm{old}}(a_t\mid s_t)}.}</div>
+<p>分子和分母必须使用同一个状态 <span class="math inline" data-tex="s_t">s_t</span>、同一个已采样动作 <span class="math inline" data-tex="a_t">a_t</span>。此时不需要用新策略重新采样动作，也不需要再与环境交互一次。</p>
+<p><strong>模型输出样例：0.2 和 0.3 是怎么计算出来的？</strong></p>
+<p>设只有两个动作 <span class="math inline" data-tex="a_0,a_1">a_0,a_1</span>。对于同一个状态 <span class="math inline" data-tex="s_A">s_A</span>，假设旧网络和更新后的网络输出以下 logits。为方便手算，使用自然对数表示分数：</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>参数版本</th>
+<th>网络输出的 logits</th>
+<th>指数化结果</th>
+<th>softmax 后的动作概率</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>旧参数</td>
+<td><span class="math inline" data-tex="(0,\ln4)">(0,\ln4)</span></td>
+<td>(1, 4)</td>
+<td>(0.2, 0.8)</td>
+</tr>
+<tr>
+<td>更新后的参数</td>
+<td><span class="math inline" data-tex="(\ln3,\ln7)">(\ln3,\ln7)</span></td>
+<td>(3, 7)</td>
+<td>(0.3, 0.7)</td>
+</tr>
+</tbody>
+</table></div>
+<p>如果旧策略当时采样并执行的是 <span class="math inline" data-tex="a_0">a_0</span>，则：</p>
+<div class="math display" data-tex="\pi_{\mathrm{old}}(a_0\mid s_A)=\frac{e^0}{e^0+e^{\ln4}}=\frac15=0.2,">\pi_{\mathrm{old}}(a_0\mid s_A)=\frac{e^0}{e^0+e^{\ln4}}=\frac15=0.2,</div>
+<div class="math display" data-tex="\pi_\theta(a_0\mid s_A)=\frac{e^{\ln3}}{e^{\ln3}+e^{\ln7}}=\frac3{10}=0.3,">\pi_\theta(a_0\mid s_A)=\frac{e^{\ln3}}{e^{\ln3}+e^{\ln7}}=\frac3{10}=0.3,</div>
+<div class="math display" data-tex="\rho=\frac{0.3}{0.2}=1.5.">\rho=\frac{0.3}{0.2}=1.5.</div>
+<p>所以，后面截断样例 A 中的“旧概率 0.2、新概率 0.3”，可以来自这样两次网络前向计算。这里给定 logits 是为了展示概率计算过程，并不是说一次梯度更新必然把概率从 0.2 改成 0.3；实际变化由网络、损失、数据和优化器共同决定。</p>
+<p>如果当时采样的是另一个动作 <span class="math inline" data-tex="a_1">a_1</span>，则应该取另一列，概率比变成 <span class="math inline" data-tex="0.7/0.8=0.875">0.7/0.8=0.875</span>，不能仍使用 1.5。</p>
+<p>代码中的数据流可以写成：</p>
+<pre><code class="language-text">采集数据时：
+    old_logits = actor_old(s_t)
+    old_distribution = Categorical(logits=old_logits)
+    a_t = old_distribution.sample()
+    old_log_prob = old_distribution.log_prob(a_t)
+    保存 s_t、a_t、old_log_prob 等数据
+
+更新当前策略时：
+    new_logits = actor_current(保存的 s_t)
+    new_distribution = Categorical(logits=new_logits)
+    new_log_prob = new_distribution.log_prob(保存的 a_t)
+    ratio = exp(new_log_prob - 保存的 old_log_prob)
+</code></pre>
+<p>最大化 <span class="math inline" data-tex="\mathbb E_t[\rho_t\hat A_t]">\mathbb E_t[\rho_t\hat A_t]</span> 会倾向于增加正优势动作的概率、减少负优势动作的概率。但有限样本有噪声，反复优化同一批数据可能改过头，下一节的截断目标就是为此设计的。</p>
+<p><strong>连续动作时的对应关系。</strong> 连续动作通常不使用“每个动作一个 softmax 分量”的模型。例如高斯策略让网络输出均值和标准差，再计算已采样动作在该高斯分布下的概率密度。此时比值是同一动作处的新旧密度之比；单个动作点的概率通常为零，密度值可以大于 1，归一化要求是对整个动作空间积分为 1。若经过 tanh 等变换，还需要相应的密度修正。后面的 0.2、0.3 样例明确使用离散动作概率。</p>
 <h3>3.3 关键优化：截断继续改进的收益</h3>
 <p>PPO-Clip 最大化：</p>
 <div class="math display" data-tex="L^{\mathrm{clip}}(\theta)=\mathbb E_t\left[\min\left(\rho_t\hat A_t,\operatorname{clip}(\rho_t,1-\epsilon,1+\epsilon)\hat A_t\right)\right].">L^{\mathrm{clip}}(\theta)=\mathbb E_t\left[\min\left(\rho_t\hat A_t,\operatorname{clip}(\rho_t,1-\epsilon,1+\epsilon)\hat A_t\right)\right].</div>
