@@ -166,6 +166,66 @@ Q(s, 右) = 4.8
 <p>优势函数为：</p>
 <div class="math display" data-tex="A^\pi(s,a)=Q^\pi(s,a)-V^\pi(s).">A^\pi(s,a)=Q^\pi(s,a)-V^\pi(s).</div>
 <p>若一个状态平均能得 10 分，而选择动作 <span class="math inline" data-tex="a">a</span> 预计能得 13 分，那么优势为 3，应增加它的概率。优势为负则应降低概率。实际训练使用采样得到的估计 <span class="math inline" data-tex="\hat A_t">\hat A_t</span>。</p>
+<p><strong>这里隐含了一个性质：优势在当前策略下的期望为零。</strong> 精确地说，固定状态 s，并让动作按照定义 Q、V 时的同一个策略采样：</p>
+<div class="math display" data-tex="\boxed{\mathbb E_{a\sim\pi(\cdot\mid s)}[A^\pi(s,a)]=0.}">\boxed{\mathbb E_{a\sim\pi(\cdot\mid s)}[A^\pi(s,a)]=0.}</div>
+<p>这里对当前动作取期望；Q、V 本身已把相应的未来回报平均过了。由定义可直接推导：</p>
+<div class="math display" data-tex="\begin{aligned}
+\mathbb E_{a\sim\pi(\cdot\mid s)}[A^\pi(s,a)]
+&amp;=\mathbb E_{a\sim\pi(\cdot\mid s)}[Q^\pi(s,a)-V^\pi(s)]\\
+&amp;=\mathbb E_{a\sim\pi(\cdot\mid s)}[Q^\pi(s,a)]-V^\pi(s)\\
+&amp;=V^\pi(s)-V^\pi(s)=0.
+\end{aligned}">\begin{aligned}
+\mathbb E_{a\sim\pi(\cdot\mid s)}[A^\pi(s,a)]
+&amp;=\mathbb E_{a\sim\pi(\cdot\mid s)}[Q^\pi(s,a)-V^\pi(s)]\\
+&amp;=\mathbb E_{a\sim\pi(\cdot\mid s)}[Q^\pi(s,a)]-V^\pi(s)\\
+&amp;=V^\pi(s)-V^\pi(s)=0.
+\end{aligned}</div>
+<p>第二步能把 V 提出来，是因为状态 s 已固定，<span class="math inline" data-tex="V^\pi(s)">V^\pi(s)</span> 不随当前采样动作变化。第三步则使用“状态价值等于按策略概率对各动作价值加权平均”的关系。</p>
+<p><strong>样例输入</strong></p>
+<p>同一个状态下，策略及真实动作价值如下：</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>动作</th>
+<th>策略概率</th>
+<th><span class="math inline" data-tex="Q^\pi(s,a)">Q^\pi(s,a)</span></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>左</td>
+<td>0.75</td>
+<td>12</td>
+</tr>
+<tr>
+<td>右</td>
+<td>0.25</td>
+<td>4</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>样例输出</strong></p>
+<pre><code class="language-text">V(s) = 10
+A(s, 左) = 2
+A(s, 右) = -6
+策略加权的优势期望 = 0
+</code></pre>
+<p><strong>样例解释</strong></p>
+<div class="math display" data-tex="V^\pi(s)=0.75\times12+0.25\times4=10,">V^\pi(s)=0.75\times12+0.25\times4=10,</div>
+<div class="math display" data-tex="A^\pi(s,\text{左})=12-10=2,\qquad
+A^\pi(s,\text{右})=4-10=-6.">A^\pi(s,\text{左})=12-10=2,\qquad
+A^\pi(s,\text{右})=4-10=-6.</div>
+<p>所以：</p>
+<div class="math display" data-tex="\mathbb E_{a\sim\pi(\cdot\mid s)}[A^\pi(s,a)]
+=0.75\times2+0.25\times(-6)=0.">\mathbb E_{a\sim\pi(\cdot\mid s)}[A^\pi(s,a)]
+=0.75\times2+0.25\times(-6)=0.</div>
+<p>注意，是按策略概率加权后为零，并非所有动作的优势直接求算术平均为零。本例的算术平均为 <span class="math inline" data-tex="(2-6)/2=-2">(2-6)/2=-2</span>。</p>
+<p><strong>既然期望为零，为什么还能改进策略？</strong> 因为零均值对应当前策略的动作权重。暂时固定旧策略的优势，只把当前动作的采样权重改为“左 0.9、右 0.1”，则：</p>
+<div class="math display" data-tex="\mathbb E_{a\sim\pi_{\mathrm{new}}(\cdot\mid s)}[A^{\pi_{\mathrm{old}}}(s,a)]
+=0.9\times2+0.1\times(-6)=1.2&gt;0.">\mathbb E_{a\sim\pi_{\mathrm{new}}(\cdot\mid s)}[A^{\pi_{\mathrm{old}}}(s,a)]
+=0.9\times2+0.1\times(-6)=1.2&gt;0.</div>
+<p>这个值表示：只改变当前一步的动作选择、后续仍按旧策略行动时，相对旧状态价值的预期提升。它不是整套新策略的完整价值增量。若重新计算新策略自己的真实优势，其在新策略下的期望仍然为零。因此，“优势均值为零”与“可以通过改变策略提高回报”并不矛盾。</p>
+<p><strong>实际训练中的区别。</strong> 上述恒等式针对同一策略的真实 Q、V 和优势。有限采样得到的优势，即便使用真实优势，其样本均值也不一定恰好为零；实际 <span class="math inline" data-tex="\hat A_t">\hat A_t</span> 还受到价值估计误差等因素影响。实现中对一批优势减去样本均值，是额外的标准化操作，不是这个理论恒等式自动保证的结果。</p>
 <h3>3.2 用概率比表示新旧策略的变化</h3>
 <p>采样策略固定为 <span class="math inline" data-tex="\pi_{\mathrm{old}}">\pi_{\mathrm{old}}</span>，待更新策略为 <span class="math inline" data-tex="\pi_\theta">\pi_\theta</span>。定义：</p>
 <div class="math display" data-tex="\rho_t(\theta)=\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\mathrm{old}}(a_t\mid s_t)}.">\rho_t(\theta)=\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\mathrm{old}}(a_t\mid s_t)}.</div>
