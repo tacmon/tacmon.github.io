@@ -6,8 +6,8 @@ from markdown_it import MarkdownIt
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = 'https://tacmon.github.io'
-TITLE = '像读竞赛题解一样理解 PPO 与 SAC'
-DESC = '从题意、DP 建模到更新公式与伪代码，用程序设计竞赛题解的方式理解 PPO 和 SAC。'
+TITLE = '题解：让小车学会送货——从同一道题理解 PPO 与 SAC'
+DESC = '一道完整的随机送货题，两种学习解法。从同一辆小车的交互记录推导价值函数、PPO 与 SAC。'
 source = (ROOT / 'content/sac-ppo.md').read_text()
 equations = []
 
@@ -50,10 +50,10 @@ def page(title, description, path, main, math=False):
 <footer class="site-footer"><span>tacmon · 把问题想清楚，把过程写下来。</span><a href="https://github.com/tacmon/tacmon.github.io">博客源码 ↗</a></footer></body></html>'''
 
 home = '''<main id="main" class="home"><section class="home-intro"><p class="eyebrow">LEARNING IN PUBLIC</p><h1>把问题拆开，<br>把理解留下。</h1><p class="lead">关于算法、强化学习与研究实践的笔记。<br>从问题出发，写下推导，也记录实现。</p></section>
-<section class="posts" aria-labelledby="posts-title"><div class="section-label"><h2 id="posts-title">最新文章</h2><span>01 / NOTES</span></div><a class="post-card" href="/posts/sac-ppo/"><div class="post-meta"><span>强化学习</span><span>算法题解</span></div><h2>像读竞赛题解一样<br>理解 PPO 与 SAC <span class="arrow">↗</span></h2><p>从题意与 DP 建模出发，推导策略更新，读懂伪代码，再检查那些最容易 WA 的细节。</p><span class="read-link">阅读全文 →</span></a></section></main>'''
+<section class="posts" aria-labelledby="posts-title"><div class="section-label"><h2 id="posts-title">最新文章</h2><span>01 / NOTES</span></div><a class="post-card" href="/posts/sac-ppo/"><div class="post-meta"><span>强化学习</span><span>算法题解</span></div><h2>让小车学会送货<br>同一道题，理解 PPO 与 SAC <span class="arrow">↗</span></h2><p>先读懂一辆小车的送货规则，再沿着同一批移动记录，理解价值、策略更新与经验回放。</p><span class="read-link">阅读全文 →</span></a></section></main>'''
 (ROOT / 'index.html').write_text(page('学习笔记', DESC, '/', home))
 
-article = f'''<main id="main"><div class="article-header"><a class="back" href="/">← 全部文章</a><p class="eyebrow">REINFORCEMENT LEARNING / 算法题解</p><h1>{TITLE}</h1><p class="lead">从“当前收益 + 后续价值”开始，理解两种策略学习方法。</p><div class="post-meta"><span>tacmon</span><span>PPO-Clip · 连续动作 SAC</span><a href="/content/sac-ppo.md">Markdown 源文 ↓</a></div></div>
+article = f'''<main id="main"><div class="article-header"><a class="back" href="/">← 全部文章</a><p class="eyebrow">REINFORCEMENT LEARNING / 算法题解</p><h1>{TITLE}</h1><p class="lead">一辆小车、一套完整规则、两种学习解法。每个公式都回到一次具体的送货决策。</p><div class="post-meta"><span>tacmon</span><span>PPO-Clip · 连续动作 SAC</span><a href="/content/sac-ppo.md">Markdown 源文 ↓</a></div></div>
 <div class="reading-layout"><aside class="toc" aria-label="文章目录"><p>本文目录</p>{''.join(toc)}<a class="back-top" href="#main">回到顶部 ↑</a></aside><article class="prose">{body}<div class="article-end">— 本文完 —</div></article></div></main>'''
 dest = ROOT / 'posts/sac-ppo'
 dest.mkdir(parents=True, exist_ok=True)
